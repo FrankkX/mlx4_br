@@ -1,28 +1,55 @@
-name: Build OpenWrt APK
+
+name: Build OpenWrt 25.12 APK
 
 on:
-  workflow_dispatch:
   push:
-    branches: ["master"]
+    branches:
+      - master
   pull_request:
-    branches: ["master"]
+    branches:
+      - master
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
   build:
+    name: Build x86_64 APK
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
 
-      - name: Build OpenWrt 25.12 APK
+      - name: Check package structure
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "=== Repository files ==="
+          ls -la
+
+          if [ ! -f Makefile ]; then
+            echo "::error::Root Makefile not found."
+            exit 1
+          fi
+
+          if ! grep -q 'include.*rules.mk' Makefile; then
+            echo "::error::Root Makefile may not be an OpenWrt package Makefile."
+            echo "The package must use OpenWrt Buildroot packaging rules."
+            exit 1
+          fi
+
+          echo "=== Package metadata ==="
+          grep -E '^(PKG_NAME|PKG_VERSION|PKG_RELEASE):?=' Makefile || true
+
+      - name: Build OpenWrt APK
         uses: nooblk-98/openwrt-package-compile-action@v1
         with:
           package-name: auto-mac-learn
+          package-dir: .
           sdk-version: "25.12.5"
           sdk-target: x86
           sdk-subtarget: "64"
-          artifact-name: auto-mac-learn-openwrt-25.12-x86-64
+          artifact-name: auto-mac-learn-openwrt-25.12.5-x86-64
