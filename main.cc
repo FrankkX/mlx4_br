@@ -20,6 +20,11 @@
 #include <type_traits>
 #include <unistd.h>
 #include <utility>
+#include <ctime>
+#include <libgen.h>
+#include <string_view>
+#include <tuple>
+#include <vector>
 
 using MAC = std::array<uint8_t, 6>;
 static_assert(sizeof(MAC) == sizeof(uint8_t) * 6);
@@ -106,8 +111,9 @@ private:
       return *this;
     }
     auto operator++(int) {
-      auto n = typedecl(*this)(*this);
-      return n++;
+      auto n = *this;
+      ++(*this);
+      return n;
     }
     operator bool() const { return len_ > 0; }
   };
@@ -154,7 +160,7 @@ class RTNLHandle {
     unsigned flags;
     std::vector<std::string> alt_names;
   };
-  int fd{0};
+  int fd{-1};
   sockaddr_nl local{};
   //   sockaddr_nl peer{};
   int proto{0};
@@ -233,7 +239,7 @@ RTNLHandle::RTNLHandle(unsigned int subscriptions, int protocol) noexcept
     bool ok = false;
     ~finally() {
       if (!ok) {
-        if (*fd > 0) {
+        if (*fd >= 0) {
           close(*fd);
         }
         *fd = -1;
@@ -289,9 +295,9 @@ RTNLHandle::RTNLHandle(unsigned int subscriptions, int protocol) noexcept
 }
 
 RTNLHandle::~RTNLHandle() noexcept {
-  if (fd > 0) {
-    fd = -1;
+  if (fd >= 0) {
     close(fd);
+    fd = -1;
   }
 }
 
