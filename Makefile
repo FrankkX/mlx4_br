@@ -1,3 +1,4 @@
+
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=mlx4-br
@@ -30,10 +31,11 @@ define Build/Compile
 		$(TARGET_CXXFLAGS) \
 		-std=gnu++20 \
 		-Wno-ignored-attributes \
-		-fno-exceptions -fno-rtti \
+		-fno-exceptions \
+		-fno-rtti \
 		-Os \
-		-o $(PKG_BUILD_DIR)/mlx4_br \
 		$(PKG_BUILD_DIR)/main.cc \
+		-o $(PKG_BUILD_DIR)/mlx4_br \
 		$(TARGET_LDFLAGS)
 endef
 
