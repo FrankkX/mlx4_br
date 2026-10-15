@@ -3,11 +3,9 @@ name: Build OpenWrt 25.12 APK
 
 on:
   push:
-    branches:
-      - master
+    branches: ["master"]
   pull_request:
-    branches:
-      - master
+    branches: ["master"]
   workflow_dispatch:
 
 permissions:
@@ -15,41 +13,155 @@ permissions:
 
 jobs:
   build:
-    name: Build x86_64 APK
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
 
-      - name: Check package structure
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential \
+            binutils bzip2 file gawk gettext git \
+            libncurses-dev libssl-dev python3 python3-distutils \
+            rsync unzip wget zstd
+
+      - name: Download OpenWrt 25.12.5 SDK
         shell: bash
         run: |
           set -euo pipefail
 
-          echo "=== Repository files ==="
-          ls -la
+          BASE="https://downloads.openwrt.org/releases/25.12.5/targets/x86/64"
 
-          if [ ! -f Makefile ]; then
-            echo "::error::Root Makefile not found."
+          SDK_FILE="$(
+            wget -qO- "$BASE/" |
+            grep -oE 'openwrt-sdk-25\.12\.5-x86-64[^"]*\.tar\.zst' |
+            sort -u |
+            head -n 1
+          )"
+
+          if [ -z "$SDK_FILE" ]; then
+            echo "::error::Cannot find the OpenWrt 25.12.5 x86/64 SDK."
             exit 1
           fi
 
-          if ! grep -q 'include.*rules.mk' Makefile; then
-            echo "::error::Root Makefile may not be an OpenWrt package Makefile."
-            echo "The package must use OpenWrt Buildroot packaging rules."
+          echo "Downloading: $SDK_FILE"
+          wget -nv "$BASE/$SDK_FILE" -O /tmp/openwrt-sdk.tar.zst
+
+          mkdir -p "$RUNNER_TEMP/openwrt-sdk"
+          tar --zstd -xf /tmp/openwrt-sdk.tar.zst \
+            -C "$RUNNER_TEMP/openwrt-sdk" \
+            --strip-components=1
+
+          echo "SDK_DIR=$RUNNER_TEMP/openwrt-sdk" >> "$GITHUB_ENV"
+
+      - name: Create OpenWrt package definition
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          PKG_DIR="$SDK_DIR/package/auto-mac-learn"
+
+          mkdir -p "$PKG_DIR/src" "$PKG_DIR/files"
+
+          cp main.cc "$PKG_DIR/src/main.cc"
+
+          # Preserve conventional OpenWrt filesystem assets from
+          # the old package directory, if they exist.
+          for path in etc usr lib; do
+            if [ -d "package/$path" ]; then
+              cp -a "package/$path" "$PKG_DIR/files/"
+            fi
+          done
+
+          cat > "$PKG_DIR/Makefile" <<'EOF'
+          include $(TOPDIR)/rules.mk
+
+          PKG_NAME:=auto-mac-learn
+          PKG_VERSION:=1.0
+          PKG_RELEASE:=1
+
+          PKG_BUILD_DIR:=$(BUILD_DIR)/$(PKG_NAME)
+
+          include $(INCLUDE_DIR)/package.mk
+
+          define Package/auto-mac-learn
+            SECTION:=net
+            CATEGORY:=Network
+            TITLE:=Automatic MAC address learning
+          endef
+
+          define Package/auto-mac-learn/description
+            Automatic MAC address learning utility.
+          endef
+
+          define Build/Prepare
+            mkdir -p $(PKG_BUILD_DIR)
+            $(CP) ./src/main.cc $(PKG_BUILD_DIR)/
+          endef
+
+          define Build/Compile
+            $(TARGET_CXX) \
+              $(TARGET_CXXFLAGS) \
+              $(TARGET_LDFLAGS) \
+              -std=gnu++17 \
+              -o $(PKG_BUILD_DIR)/auto-mac-learn \
+              $(PKG_BUILD_DIR)/main.cc
+          endef
+
+          define Package/auto-mac-learn/install
+            $(INSTALL_DIR) $(1)/usr/sbin
+            $(INSTALL_BIN) $(PKG_BUILD_DIR)/auto-mac-learn \
+              $(1)/usr/sbin/auto-mac-learn
+
+            if [ -d ./files ]; then \
+              $(CP) ./files/. $(1)/; \
+            fi
+          endef
+
+          $(eval $(call BuildPackage,auto-mac-learn))
+          EOF
+
+          echo "===== Generated package Makefile ====="
+          cat "$PKG_DIR/Makefile"
+
+      - name: Compile APK
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cd "$SDK_DIR"
+
+          make defconfig
+
+          make package/auto-mac-learn/compile V=s
+
+          echo "===== Generated APK files ====="
+          find bin packages -type f -name '*.apk' -print
+
+      - name: Collect APK artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p "$RUNNER_TEMP/apk-artifacts"
+
+          find "$SDK_DIR/bin" "$SDK_DIR/packages" \
+            -type f -name '*auto-mac-learn*.apk' \
+            -exec cp -v {} "$RUNNER_TEMP/apk-artifacts/" \;
+
+          if ! find "$RUNNER_TEMP/apk-artifacts" \
+            -type f -name '*.apk' | grep -q .; then
+            echo "::error::No APK was generated."
             exit 1
           fi
 
-          echo "=== Package metadata ==="
-          grep -E '^(PKG_NAME|PKG_VERSION|PKG_RELEASE):?=' Makefile || true
+          ls -lh "$RUNNER_TEMP/apk-artifacts"
 
-      - name: Build OpenWrt APK
-        uses: nooblk-98/openwrt-package-compile-action@v1
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
         with:
-          package-name: auto-mac-learn
-          package-dir: .
-          sdk-version: "25.12.5"
-          sdk-target: x86
-          sdk-subtarget: "64"
-          artifact-name: auto-mac-learn-openwrt-25.12.5-x86-64
+          name: auto-mac-learn-openwrt-25.12.5-x86-64
+          path: ${{ runner.temp }}/apk-artifacts/*.apk
+          if-no-files-found: error
