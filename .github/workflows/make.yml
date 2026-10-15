@@ -1,244 +1,192 @@
 
-name: Build OpenWrt 25.12 APK
+name: Build mlx4-br for OpenWrt 25.12
 
 on:
-  push:
-    branches: ["master"]
-  pull_request:
-    branches: ["master"]
   workflow_dispatch:
+    inputs:
+      sdk_version:
+        description: "OpenWrt release version"
+        required: true
+        type: string
+        default: "25.12.0"
 
 permissions:
   contents: read
 
 jobs:
   build:
+    name: Build x86_64 APK
     runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
 
-      - name: Install host tools
+      - name: Install build tools
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            build-essential binutils bzip2 file gawk \
-            gettext git libncurses-dev libssl-dev \
-            python3 rsync unzip wget zstd
+            build-essential \
+            ca-certificates \
+            curl \
+            file \
+            python3 \
+            zstd
 
-      - name: Download OpenWrt 25.12.5 SDK
+      - name: Download OpenWrt SDK
+        id: sdk
         shell: bash
+        env:
+          SDK_VERSION: ${{ inputs.sdk_version }}
         run: |
           set -euo pipefail
 
-          BASE="https://downloads.openwrt.org/releases/25.12.5/targets/x86/64"
+          BASE_URL="https://downloads.openwrt.org/releases/${SDK_VERSION}/targets/x86/64"
 
-          PAGE="$(wget -qO- "$BASE/")"
+          echo "Checking official SDK directory:"
+          echo "$BASE_URL"
+
+          curl -fsSL "$BASE_URL/" -o "$RUNNER_TEMP/sdk-index.html"
 
           SDK_FILE="$(
-            printf '%s' "$PAGE" |
-            grep -oE 'openwrt-sdk-25\.12\.5-x86-64[^"]*\.tar\.zst' |
-            sort -u |
-            head -n 1
+            python3 - "$RUNNER_TEMP/sdk-index.html" <<'PY'
+          import re
+          import sys
+          from html.parser import HTMLParser
+
+          class Links(HTMLParser):
+              def __init__(self):
+                  super().__init__()
+                  self.hrefs = []
+
+              def handle_starttag(self, tag, attrs):
+                  if tag == "a":
+                      href = dict(attrs).get("href", "")
+                      if href:
+                          self.hrefs.append(href)
+
+          parser = Links()
+          with open(sys.argv[1], encoding="utf-8") as f:
+              parser.feed(f.read())
+
+          pattern = re.compile(
+              r"^openwrt-sdk-.*Linux-x86_64\.tar\.(?:zst|xz|gz)$"
+          )
+          candidates = sorted(
+              {x for x in parser.hrefs if pattern.match(x)}
+          )
+
+          if not candidates:
+              sys.exit("ERROR: No x86_64 SDK archive found in official directory")
+
+          print(candidates[-1])
+          PY
           )"
 
-          if [ -z "$SDK_FILE" ]; then
-            echo "::error::OpenWrt SDK archive not found."
+          echo "Selected SDK: $SDK_FILE"
+
+          mkdir -p "$RUNNER_TEMP/sdk-extract"
+
+          curl -fL \
+            "$BASE_URL/$SDK_FILE" \
+            -o "$RUNNER_TEMP/sdk-archive"
+
+          tar -xf "$RUNNER_TEMP/sdk-archive" \
+            -C "$RUNNER_TEMP/sdk-extract"
+
+          SDK_DIR="$(find "$RUNNER_TEMP/sdk-extract" \
+            -mindepth 1 -maxdepth 1 -type d \
+            -name 'openwrt-sdk-*' -print -quit)"
+
+          if [ -z "$SDK_DIR" ]; then
+            echo "ERROR: SDK directory not found after extraction"
             exit 1
           fi
 
-          wget -nv "$BASE/$SDK_FILE" -O /tmp/openwrt-sdk.tar.zst
+          echo "sdk_dir=$SDK_DIR" >> "$GITHUB_OUTPUT"
 
-          mkdir -p "$RUNNER_TEMP/openwrt-sdk"
-          tar --zstd -xf /tmp/openwrt-sdk.tar.zst \
-            -C "$RUNNER_TEMP/openwrt-sdk" \
-            --strip-components=1
-
-          echo "SDK_DIR=$RUNNER_TEMP/openwrt-sdk" >> "$GITHUB_ENV"
-
-      - name: Check source and fix known C++ issues
+      - name: Check package layout
         shell: bash
         run: |
           set -euo pipefail
 
-          test -f main.cc
+          test -f package/mlx4-br/Makefile
+          test -f package/mlx4-br/src/main.cc
+          test -f package/mlx4-br/files/mlx4_br.init
 
-          python3 <<'PY'
-          from pathlib import Path
+          echo "Package source files:"
+          find package/mlx4-br -maxdepth 3 -type f -print
 
-          p = Path("main.cc")
-          s = p.read_text()
-
-          # Add required standard/system headers if missing.
-          anchor = "#include <utility>"
-          additions = [
-              "#include <ctime>",
-              "#include <libgen.h>",
-              "#include <string_view>",
-              "#include <tuple>",
-              "#include <vector>",
-          ]
-
-          if anchor not in s:
-              raise SystemExit("Cannot find expected include anchor in main.cc")
-
-          missing = [h for h in additions if h not in s]
-          if missing:
-              s = s.replace(
-                  anchor,
-                  anchor + "\n" + "\n".join(missing),
-                  1
-              )
-
-          old = """      auto n = typedecl(*this)(*this);
-                return n++;"""
-          new = """      auto n = *this;
-                ++(*this);
-                return n;"""
-
-          if old in s:
-              s = s.replace(old, new, 1)
-          elif "typedecl(*this)" in s:
-              raise SystemExit(
-                  "Found typedecl typo but its surrounding code differs; "
-                  "fix postfix operator++ manually."
-              )
-
-          old_dtor = """RTNLHandle::~RTNLHandle() noexcept {
-            if (fd > 0) {
-              fd = -1;
-              close(fd);
-            }
-          }"""
-
-          new_dtor = """RTNLHandle::~RTNLHandle() noexcept {
-            if (fd >= 0) {
-              close(fd);
-              fd = -1;
-            }
-          }"""
-
-          if old_dtor in s:
-              s = s.replace(old_dtor, new_dtor, 1)
-
-          # Also handle the original formatting in the uploaded source.
-          if "fd = -1;\n    close(fd);" in s:
-              s = s.replace(
-                  "if (fd > 0) {\n    fd = -1;\n    close(fd);\n  }",
-                  "if (fd >= 0) {\n    close(fd);\n    fd = -1;\n  }",
-                  1
-              )
-
-          p.write_text(s)
-          PY
-
-          echo "===== Source checks ====="
-          grep -nE 'typedecl|RTNLHandle::~RTNLHandle|#include <vector>' \
-            main.cc || true
-
-      - name: Create OpenWrt package
+      - name: Prepare SDK package
         shell: bash
+        env:
+          SDK_DIR: ${{ steps.sdk.outputs.sdk_dir }}
         run: |
           set -euo pipefail
 
-          PKG_DIR="$SDK_DIR/package/auto-mac-learn"
+          cp -a package/mlx4-br "$SDK_DIR/package/"
 
-          mkdir -p "$PKG_DIR/src" "$PKG_DIR/files"
+          echo "Checking Makefile line numbers:"
+          nl -ba "$SDK_DIR/package/mlx4-br/Makefile"
 
-          cp main.cc "$PKG_DIR/src/main.cc"
+          echo "Checking for CRLF line endings:"
+          if grep -Ilr $'\r' "$SDK_DIR/package/mlx4-br"; then
+            echo "WARNING: CRLF line endings detected"
+          fi
 
-          # Keep common runtime assets from the legacy package directory.
-          for path in etc usr lib; do
-            if [ -d "package/$path" ]; then
-              cp -a "package/$path" "$PKG_DIR/files/"
-            fi
-          done
-
-          cat > "$PKG_DIR/Makefile" <<'EOF'
-          include $(TOPDIR)/rules.mk
-
-          PKG_NAME:=auto-mac-learn
-          PKG_VERSION:=1.0
-          PKG_RELEASE:=1
-
-          PKG_BUILD_DIR:=$(BUILD_DIR)/$(PKG_NAME)
-
-          include $(INCLUDE_DIR)/package.mk
-
-          define Package/auto-mac-learn
-            SECTION:=net
-            CATEGORY:=Network
-            TITLE:=Automatic MAC address learning
-            DEPENDS:=+libstdcpp
-          endef
-
-          define Package/auto-mac-learn/description
-            Learn bridge forwarding database MAC addresses and
-            propagate them to supported NIC hardware filters.
-          endef
-
-          define Build/Prepare
-            mkdir -p $(PKG_BUILD_DIR)
-            $(CP) ./src/main.cc $(PKG_BUILD_DIR)/
-          endef
-
-          define Build/Compile
-            $(TARGET_CXX) \
-              $(TARGET_CXXFLAGS) \
-              $(TARGET_LDFLAGS) \
-              -std=gnu++20 \
-              -o $(PKG_BUILD_DIR)/auto-mac-learn \
-              $(PKG_BUILD_DIR)/main.cc
-          endef
-
-          define Package/auto-mac-learn/install
-            $(INSTALL_DIR) $(1)/usr/sbin
-            $(INSTALL_BIN) $(PKG_BUILD_DIR)/auto-mac-learn \
-              $(1)/usr/sbin/auto-mac-learn
-
-            if [ -d ./files ]; then \
-              $(CP) ./files/. $(1)/; \
-            fi
-          endef
-
-          $(eval $(call BuildPackage,auto-mac-learn))
-          EOF
-
-      - name: Build APK
+      - name: Configure SDK
         shell: bash
+        env:
+          SDK_DIR: ${{ steps.sdk.outputs.sdk_dir }}
+        run: |
+          set -euo pipefail
+          cd "$SDK_DIR"
+          make defconfig
+
+      - name: Compile mlx4-br
+        shell: bash
+        env:
+          SDK_DIR: ${{ steps.sdk.outputs.sdk_dir }}
         run: |
           set -euo pipefail
           cd "$SDK_DIR"
 
-          make defconfig
-          make package/auto-mac-learn/compile V=s
-
-          echo "===== Generated APK files ====="
-          find bin packages -type f -name '*.apk' -print
+          make package/mlx4-br/clean || true
+          make package/mlx4-br/compile V=s
 
       - name: Collect APK
         shell: bash
+        env:
+          SDK_DIR: ${{ steps.sdk.outputs.sdk_dir }}
         run: |
           set -euo pipefail
 
-          mkdir -p "$RUNNER_TEMP/apk-artifacts"
+          mkdir -p "$GITHUB_WORKSPACE/dist"
 
-          find "$SDK_DIR/bin" "$SDK_DIR/packages" \
-            -type f -name 'auto-mac-learn*.apk' \
-            -exec cp -v {} "$RUNNER_TEMP/apk-artifacts/" \;
+          find "$SDK_DIR/bin/packages" \
+            -type f \
+            -name 'mlx4-br_*.apk' \
+            -print \
+            -exec cp -v {} "$GITHUB_WORKSPACE/dist/" \;
 
-          if ! find "$RUNNER_TEMP/apk-artifacts" \
-            -type f -name '*.apk' | grep -q .; then
-            echo "::error::APK was not generated."
+          if ! find "$GITHUB_WORKSPACE/dist" \
+            -maxdepth 1 -type f -name 'mlx4-br_*.apk' \
+            | grep -q .; then
+            echo "ERROR: mlx4-br APK was not generated"
+            echo "Available APK files:"
+            find "$SDK_DIR/bin/packages" -type f -name '*.apk' -print || true
             exit 1
           fi
 
-          ls -lh "$RUNNER_TEMP/apk-artifacts"
+          cd "$GITHUB_WORKSPACE/dist"
+          sha256sum mlx4-br_*.apk | tee SHA256SUMS.txt
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: auto-mac-learn-openwrt-25.12.5-x86-64
-          path: ${{ runner.temp }}/apk-artifacts/*.apk
+          name: mlx4-br-openwrt-25.12-x86_64
+          path: |
+            dist/*.apk
+            dist/SHA256SUMS.txt
           if-no-files-found: error
+          retention-days: 30
