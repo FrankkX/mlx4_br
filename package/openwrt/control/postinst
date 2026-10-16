@@ -1,12 +1,23 @@
 #!/bin/sh
 
-chmod +x /usr/bin/mlx4_br
-chmod +x /etc/init.d/mlx4_br
+# Compatible with both opkg (IPKG_*) and apk environments
+chmod +x /usr/bin/mlx4_br 2>/dev/null || true
+chmod +x /etc/init.d/mlx4_br 2>/dev/null || true
 
+# Skip when called from image builder / offline install
 [ "${IPKG_NO_SCRIPT}" = "1" ] && exit 0
-. ${IPKG_INSTROOT}/lib/functions.sh
-default_postinst $0 $@
-ret=$?
-/etc/init.d/mlx4_br enable
-/etc/init.d/mlx4_br restart
+[ "${APK_NO_SCRIPT}" = "1" ] && exit 0
+
+# Prefer procd/OpenWrt helpers when available
+if [ -f "${IPKG_INSTROOT}/lib/functions.sh" ]; then
+	. ${IPKG_INSTROOT}/lib/functions.sh
+	default_postinst $0 $@
+fi
+
+# Enable and start the service
+if [ -x /etc/init.d/mlx4_br ]; then
+	/etc/init.d/mlx4_br enable
+	/etc/init.d/mlx4_br restart
+fi
+
 exit 0
