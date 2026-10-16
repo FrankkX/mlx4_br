@@ -27,7 +27,7 @@ openwrt: binary
 		--info "name:mlx4_br" \
 		--info "version:$(PKG_VERSION)" \
 		--info "description:Driver to allow adding mlx4/mlx5/iavf/ixgbevf VF into linux bridge" \
-		--info "arch:all" \
+		--info "arch:noarch" \
 		--info "license:GPL-2.0-only" \
 		--info "origin:https://github.com/yujincheng08/mlx4_br" \
 		--info "maintainer:yujincheng08" \
