@@ -18,10 +18,15 @@ jobs:
         fetch-depth: 0
 
     - name: Prepare OpenWrt SDK Environment
+      env:
+        DEBIAN_FRONTEND: noninteractive
       run: |
+        # 避免 apt 安装时因服务重启产生 exit code 8 报错
+        echo 'libc6 libraries/restart-without-checking boolean true' | sudo debconf-set-selections
+        
         sudo apt-get update
-        # 修正了包名，移除了不存在的 build-upx，改用 upx-ucl
-        sudo apt-get install -y upx-ucl libfuse-dev ecj libncurses5-dev libncursesw5-dev \
+        sudo apt-get install -y --no-install-recommends \
+          upx-ucl libfuse-dev ecj libncurses5-dev libncursesw5-dev \
           rsync wget curl python3 python3-pip git unzip zlib1g-dev gawk libssl-dev \
           gettext build-essential time perl subversion libelf-dev autoconf automake \
           libtool autopoint genisoimage libgmp-dev libmpc-dev
@@ -43,7 +48,7 @@ jobs:
       run: |
         cd /workdir-sdk
         make defconfig
-        # 启用 apk 格式输出并勾选当前编译模块
+        # 强制启用 apk 格式输出并勾选当前编译模块
         echo "CONFIG_PACKAGE_FORMAT_APK=y" >> .config
         echo "CONFIG_PACKAGE_mlx4_br=m" >> .config
         make defconfig
