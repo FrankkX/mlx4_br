@@ -21,8 +21,8 @@ jobs:
       env:
         DEBIAN_FRONTEND: noninteractive
       run: |
-        # 避免 apt 安装时因服务重启产生 exit code 8 报错
-        echo 'libc6 libraries/restart-without-checking boolean true' | sudo debconf-set-selections
+        # 彻底移除可能会拦截并导致 exit code 8 报错的 needrestart 服务检查工具
+        sudo apt-get purge -y needrestart || true
         
         sudo apt-get update
         sudo apt-get install -y --no-install-recommends \
