@@ -23,9 +23,17 @@ jobs:
 
     - name: Build and install apk-tools (for apk mkpkg)
       run: |
-        git clone --depth 1 https://gitlab.alpinelinux.org/alpine/apk-tools.git /tmp/apk-tools
+        git clone --depth 1 https://github.com/alpinelinux/apk-tools.git /tmp/apk-tools
         cd /tmp/apk-tools
-        meson setup build -Ddocs=disabled -Dhelp=enabled -Dcrypto_backend=openssl -Ddefault_library=static -Dlua_version=5.1 -Dzstd=disabled -Dpython=disabled -Dtests=disabled
+        meson setup build \
+          -Ddocs=disabled \
+          -Dhelp=enabled \
+          -Dcrypto_backend=openssl \
+          -Ddefault_library=static \
+          -Dlua_version=5.1 \
+          -Dzstd=disabled \
+          -Dpython=disabled \
+          -Dtests=disabled
         ninja -C build
         sudo install -m755 build/src/apk /usr/local/bin/apk
         apk --version
