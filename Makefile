@@ -1,11 +1,15 @@
 SHELL=/bin/bash
 
 VERSION := $(shell git describe --tags --abbrev=0 2>/dev/null || echo "0.0.0")
+# OpenWrt/apk version must start with a digit
+PKG_VERSION := $(shell echo "$(VERSION)" | sed 's/^v//')
 
 all: debian openwrt
 
 openwrt: binary
-	@echo "Building openwrt APK package"
+	@echo "Building openwrt APK package (version=$(PKG_VERSION))"
+	@command -v apk >/dev/null 2>&1 || { echo "ERROR: apk not found in PATH"; exit 1; }
+	@apk mkpkg --help >/dev/null 2>&1 || { echo "ERROR: apk mkpkg not available (need apk-tools 3.x)"; apk --version; exit 1; }
 	$(eval TMP := $(shell mktemp -d))
 	@mkdir -p $(TMP)/root/usr/bin
 	cp mlx4_br $(TMP)/root/usr/bin/ -af
@@ -14,39 +18,28 @@ openwrt: binary
 	cp package/openwrt/mlx4_br $(TMP)/root/etc/init.d/ -af
 	chmod +x $(TMP)/root/etc/init.d/mlx4_br
 
-	# Create post-install script for APK
 	@mkdir -p $(TMP)/scripts
 	cp package/openwrt/control/postinst $(TMP)/scripts/post-install
 	chmod +x $(TMP)/scripts/post-install
 
-	# Prefer apk mkpkg if available (OpenWrt 25.12+ / apk-tools 3.x)
-	@if command -v apk >/dev/null 2>&1 && apk mkpkg --help >/dev/null 2>&1; then \
-		echo "Using apk mkpkg"; \
-		apk mkpkg \
-			--info "name:mlx4_br" \
-			--info "version:$(VERSION)" \
-			--info "description:Driver to allow adding mlx4/mlx5/iavf/ixgbevf VF into linux bridge" \
-			--info "arch:all" \
-			--info "license:GPL-2.0-only" \
-			--info "origin:https://github.com/yujincheng08/mlx4_br" \
-			--info "maintainer:yujincheng08" \
-			--info "url:https://github.com/yujincheng08/mlx4_br" \
-			--script "post-install:$(TMP)/scripts/post-install" \
-			--files "$(TMP)/root" \
-			--output "mlx4_br-$(VERSION).apk"; \
-	else \
-		echo "apk mkpkg not found, falling back to legacy IPK packaging"; \
-		tar --owner=root --group=root -zcf $(TMP)/data.tar.gz -C $(TMP)/root .; \
-		cp -a package/openwrt/control $(TMP)/control; \
-		chmod +x $(TMP)/control/*; \
-		sed -i "s/Version:.*/Version: $(VERSION)/" $(TMP)/control/control; \
-		tar --owner=root --group=root -zcf $(TMP)/control.tar.gz -C $(TMP)/control .; \
-		cp package/openwrt/debian-binary $(TMP)/debian-binary -af; \
-		rm -rf $(TMP)/root $(TMP)/control $(TMP)/scripts; \
-		tar --owner=root --group=root -zcf mlx4_br_$(VERSION)_x86-64.ipk -C $(TMP) .; \
-	fi
+	@echo "Running: apk mkpkg ..."
+	apk mkpkg \
+		--info "name:mlx4_br" \
+		--info "version:$(PKG_VERSION)" \
+		--info "description:Driver to allow adding mlx4/mlx5/iavf/ixgbevf VF into linux bridge" \
+		--info "arch:all" \
+		--info "license:GPL-2.0-only" \
+		--info "origin:https://github.com/yujincheng08/mlx4_br" \
+		--info "maintainer:yujincheng08" \
+		--info "url:https://github.com/yujincheng08/mlx4_br" \
+		--script "post-install:$(TMP)/scripts/post-install" \
+		--files "$(TMP)/root" \
+		--output "mlx4_br-$(PKG_VERSION).apk"
+	@test -f "mlx4_br-$(PKG_VERSION).apk" || { echo "ERROR: apk file was not created"; exit 1; }
+	@ls -la "mlx4_br-$(PKG_VERSION).apk"
+	@file "mlx4_br-$(PKG_VERSION).apk" || true
 	rm -rf $(TMP)
-	@echo "Cleanup openwrt package"
+	@echo "OpenWrt APK package built successfully"
 
 debian: binary
 	@echo "Building debian package"
@@ -60,8 +53,8 @@ debian: binary
 	fi
 	@if [ -d package/debian/DEBIAN ]; then \
 		cp package/debian/DEBIAN $(TMP)/ -raf; \
-		sed -i "s/Version:.*/Version: $(VERSION)/" $(TMP)/DEBIAN/control; \
-		dpkg-deb -b -Zgzip $(TMP) mlx4_br.$(VERSION).deb; \
+		sed -i "s/Version:.*/Version: $(PKG_VERSION)/" $(TMP)/DEBIAN/control; \
+		dpkg-deb -b -Zgzip $(TMP) mlx4_br.$(PKG_VERSION).deb; \
 	else \
 		echo "Warning: package/debian/DEBIAN not found, skipping deb package"; \
 	fi
