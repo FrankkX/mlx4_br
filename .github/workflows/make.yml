@@ -1,4 +1,4 @@
-name: C/C++ CI
+name: Build packages
 
 on:
   push:
@@ -12,17 +12,28 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
+    - name: Checkout
+      uses: actions/checkout@v4
       with:
         fetch-depth: 0
 
     - name: Install build dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y g++ upx-ucl meson ninja-build pkg-config \
-          zlib1g-dev libssl-dev lua5.1 liblua5.1-dev
+        sudo apt-get install -y \
+          g++ \
+          upx-ucl \
+          meson \
+          ninja-build \
+          pkg-config \
+          zlib1g-dev \
+          libssl-dev \
+          lua5.1 \
+          liblua5.1-dev \
+          fakeroot \
+          file
 
-    - name: Build and install apk-tools (for apk mkpkg)
+    - name: Build and install apk-tools 3.x
       run: |
         set -e
         git clone --depth 1 https://github.com/alpinelinux/apk-tools.git /tmp/apk-tools
@@ -38,29 +49,31 @@ jobs:
           -Dtests=disabled
         ninja -C build
         APK_BIN=$(find build -type f -name apk -executable | head -1)
-        echo "Found apk binary at: $APK_BIN"
+        echo "Installing apk from: $APK_BIN"
         sudo install -m755 "$APK_BIN" /usr/local/bin/apk
         which apk
         apk --version
-        apk mkpkg --help | head -10
+        # Probe mkpkg (may exit non-zero without args; ignore)
+        apk mkpkg 2>&1 | head -10 || true
 
-    - name: make
+    - name: Build packages
       run: |
         set -e
         make clean || true
         make
         echo "==== Artifacts ===="
-        ls -la *.apk *.deb *.ipk 2>/dev/null || true
-        test -f mlx4_br-*.apk || test -f mlx4_br*.apk || {
+        ls -la mlx4_br-*.apk mlx4_br*.deb 2>/dev/null || true
+        # Require APK
+        ls mlx4_br-*.apk >/dev/null 2>&1 || {
           echo "ERROR: No .apk produced"
           exit 1
         }
 
-    - name: upload
+    - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
         name: artifacts
         path: |
-          *.deb
           *.apk
+          *.deb
         if-no-files-found: error
