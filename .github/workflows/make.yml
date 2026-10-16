@@ -21,9 +21,11 @@ jobs:
       env:
         DEBIAN_FRONTEND: noninteractive
       run: |
-        # 彻底移除可能会拦截并导致 exit code 8 报错的 needrestart 服务检查工具
+        # 1. 彻底禁用或删除 needrestart，防止其在服务重启检测时抛出 exit code 8 错误
         sudo apt-get purge -y needrestart || true
-        
+        sudo sed -i 's/#$nrconf{restart} = '\''i'\'';/$nrconf{restart} = '\''l'\'';/g' /etc/needrestart/needrestart.conf || true
+
+        # 2. 更新并安装编译依赖
         sudo apt-get update
         sudo apt-get install -y --no-install-recommends \
           upx-ucl libfuse-dev ecj libncurses5-dev libncursesw5-dev \
@@ -31,7 +33,7 @@ jobs:
           gettext build-essential time perl subversion libelf-dev autoconf automake \
           libtool autopoint genisoimage libgmp-dev libmpc-dev
         
-        # 下载 OpenWrt 25.12-SNAPSHOT 官方 x86_64 SDK
+        # 3. 下载 OpenWrt 25.12-SNAPSHOT 官方 x86_64 SDK
         SDK_URL="https://downloads.openwrt.org/releases/25.12-SNAPSHOT/targets/x86/64/openwrt-sdk-25.12-SNAPSHOT-x86-64_gcc-13.x_musl.Linux-x86_64.tar.xz"
         wget -q $SDK_URL -O sdk.tar.xz
         tar -xf sdk.tar.xz
@@ -48,12 +50,12 @@ jobs:
       run: |
         cd /workdir-sdk
         make defconfig
-        # 强制启用 apk 格式输出并勾选当前编译模块
+        # 4. 强制启用 apk 格式输出并勾选当前编译模块
         echo "CONFIG_PACKAGE_FORMAT_APK=y" >> .config
         echo "CONFIG_PACKAGE_mlx4_br=m" >> .config
         make defconfig
         
-        # 编译 x86_64 专属包
+        # 5. 编译 x86_64 专属包
         make package/mlx4_br/compile V=s
 
     - name: Collect APK Artifacts
