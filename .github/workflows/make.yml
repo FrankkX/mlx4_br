@@ -20,7 +20,8 @@ jobs:
     - name: Prepare OpenWrt SDK Environment
       run: |
         sudo apt-get update
-        sudo apt-get install -y build-upx libfuse-dev ecj libncurses5-dev libncursesw5-dev \
+        # 修正了包名，移除了不存在的 build-upx，改用 upx-ucl
+        sudo apt-get install -y upx-ucl libfuse-dev ecj libncurses5-dev libncursesw5-dev \
           rsync wget curl python3 python3-pip git unzip zlib1g-dev gawk libssl-dev \
           gettext build-essential time perl subversion libelf-dev autoconf automake \
           libtool autopoint genisoimage libgmp-dev libmpc-dev
@@ -34,7 +35,6 @@ jobs:
     - name: Integrate Package into SDK
       run: |
         mkdir -p /workdir-sdk/package/mlx4_br
-        # 将当前仓库的文件软链接或复制到 SDK package 目录中
         cp -af ./main.cc /workdir-sdk/package/mlx4_br/
         cp -af ./Makefile /workdir-sdk/package/mlx4_br/
         cp -rf ./package /workdir-sdk/package/mlx4_br/
@@ -43,12 +43,12 @@ jobs:
       run: |
         cd /workdir-sdk
         make defconfig
-        # 确保启用 apk 格式输出
+        # 启用 apk 格式输出并勾选当前编译模块
         echo "CONFIG_PACKAGE_FORMAT_APK=y" >> .config
         echo "CONFIG_PACKAGE_mlx4_br=m" >> .config
         make defconfig
         
-        # 开始编译
+        # 编译 x86_64 专属包
         make package/mlx4_br/compile V=s
 
     - name: Collect APK Artifacts
@@ -60,5 +60,5 @@ jobs:
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: openwrt-25.12-mlx4_br-apk
+        name: openwrt-25.12-mlx4_br-x86_64-apk
         path: ./artifact_output/*.apk
