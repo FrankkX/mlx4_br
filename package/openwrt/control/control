@@ -1,10 +1,9 @@
 Package: mlx4_br
-Version: 1.0.0-1
-Depends: libc, libstdcpp
-Source: package/openwrt/mlx4_br
-SourceName: mlx4_br
-License: MIT
+Architecture: all
+Priority: optional
 Section: net
-Architecture: x86_64
+Version:
 Maintainer: yujincheng08
-Description: Driver to allow adding mlx4 vf into linux bridge
+Source: https://github.com/yujincheng08/mlx4_br
+Description: Driver to allow adding mlx4/mlx5/iavf/ixgbevf VF into linux bridge
+Enabled: yes
