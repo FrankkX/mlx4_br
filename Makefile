@@ -1,7 +1,6 @@
 SHELL=/bin/bash
 
 VERSION := $(shell git describe --tags --abbrev=0 2>/dev/null || echo "0.0.0")
-# OpenWrt/apk version must start with a digit
 PKG_VERSION := $(shell echo "$(VERSION)" | sed 's/^v//')
 
 all: debian openwrt
@@ -9,7 +8,8 @@ all: debian openwrt
 openwrt: binary
 	@echo "Building openwrt APK package (version=$(PKG_VERSION))"
 	@command -v apk >/dev/null 2>&1 || { echo "ERROR: apk not found in PATH"; exit 1; }
-	@apk mkpkg --help >/dev/null 2>&1 || { echo "ERROR: apk mkpkg not available (need apk-tools 3.x)"; apk --version; exit 1; }
+	@apk --version
+	@apk mkpkg 2>&1 | head -5 || true
 	$(eval TMP := $(shell mktemp -d))
 	@mkdir -p $(TMP)/root/usr/bin
 	cp mlx4_br $(TMP)/root/usr/bin/ -af
@@ -35,7 +35,7 @@ openwrt: binary
 		--script "post-install:$(TMP)/scripts/post-install" \
 		--files "$(TMP)/root" \
 		--output "mlx4_br-$(PKG_VERSION).apk"
-	@test -f "mlx4_br-$(PKG_VERSION).apk" || { echo "ERROR: apk file was not created"; exit 1; }
+	@test -f "mlx4_br-$(PKG_VERSION).apk" || { echo "ERROR: apk file was not created"; ls -la; exit 1; }
 	@ls -la "mlx4_br-$(PKG_VERSION).apk"
 	@file "mlx4_br-$(PKG_VERSION).apk" || true
 	rm -rf $(TMP)
