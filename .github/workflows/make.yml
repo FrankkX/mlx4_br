@@ -19,7 +19,7 @@ jobs:
     - name: Install build dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y g++ upx-ucl meson ninja-build pkg-config zlib1g-dev libssl-dev
+        sudo apt-get install -y g++ upx-ucl meson ninja-build pkg-config zlib1g-dev libssl-dev lua5.1 liblua5.1-dev
 
     - name: Build and install apk-tools (for apk mkpkg)
       run: |
@@ -35,7 +35,8 @@ jobs:
           -Dpython=disabled \
           -Dtests=disabled
         ninja -C build
-        sudo install -m755 build/src/apk /usr/local/bin/apk
+        APK_BIN=$(find build -type f -name apk -executable | head -1)
+        sudo install -m755 "$APK_BIN" /usr/local/bin/apk
         apk --version
         apk mkpkg --help | head -5
 
