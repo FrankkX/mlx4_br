@@ -1,71 +1,48 @@
-name: Build OpenWrt 25.12 APK
+name: C/C++ CI
 
 on:
   push:
-    branches: [ "master", "main" ]
+    branches: [ "master" ]
   pull_request:
-    branches: [ "master", "main" ]
+    branches: [ "master" ]
   workflow_dispatch:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout Repository
-      uses: actions/checkout@v4
+    - uses: actions/checkout@v4
       with:
         fetch-depth: 0
 
-    - name: Prepare OpenWrt SDK Environment
-      env:
-        DEBIAN_FRONTEND: noninteractive
+    - name: Install build dependencies
       run: |
-        # 1. 彻底禁用或删除 needrestart，防止其在服务重启检测时抛出 exit code 8 错误
-        sudo apt-get purge -y needrestart || true
-        sudo sed -i 's/#$nrconf{restart} = '\''i'\'';/$nrconf{restart} = '\''l'\'';/g' /etc/needrestart/needrestart.conf || true
-
-        # 2. 更新并安装编译依赖
         sudo apt-get update
-        sudo apt-get install -y --no-install-recommends \
-          upx-ucl libfuse-dev ecj libncurses5-dev libncursesw5-dev \
-          rsync wget curl python3 python3-pip git unzip zlib1g-dev gawk libssl-dev \
-          gettext build-essential time perl subversion libelf-dev autoconf automake \
-          libtool autopoint genisoimage libgmp-dev libmpc-dev
-        
-        # 3. 下载 OpenWrt 25.12-SNAPSHOT 官方 x86_64 SDK
-        SDK_URL="https://downloads.openwrt.org/releases/25.12-SNAPSHOT/targets/x86/64/openwrt-sdk-25.12-SNAPSHOT-x86-64_gcc-13.x_musl.Linux-x86_64.tar.xz"
-        wget -q $SDK_URL -O sdk.tar.xz
-        tar -xf sdk.tar.xz
-        mv openwrt-sdk-* /workdir-sdk
+        sudo apt-get install -y g++ upx-ucl meson ninja-build pkg-config zlib1g-dev libssl-dev
 
-    - name: Integrate Package into SDK
+    - name: Build and install apk-tools (for apk mkpkg)
       run: |
-        mkdir -p /workdir-sdk/package/mlx4_br
-        cp -af ./main.cc /workdir-sdk/package/mlx4_br/
-        cp -af ./Makefile /workdir-sdk/package/mlx4_br/
-        cp -rf ./package /workdir-sdk/package/mlx4_br/
+        git clone --depth 1 https://gitlab.alpinelinux.org/alpine/apk-tools.git /tmp/apk-tools
+        cd /tmp/apk-tools
+        meson setup build -Ddocs=disabled -Dhelp=enabled -Dcrypto_backend=openssl -Ddefault_library=static -Dlua_version=5.1 -Dzstd=disabled -Dpython=disabled -Dtests=disabled
+        ninja -C build
+        sudo install -m755 build/src/apk /usr/local/bin/apk
+        apk --version
+        apk mkpkg --help | head -5
 
-    - name: Configure and Compile
-      run: |
-        cd /workdir-sdk
-        make defconfig
-        # 4. 强制启用 apk 格式输出并勾选当前编译模块
-        echo "CONFIG_PACKAGE_FORMAT_APK=y" >> .config
-        echo "CONFIG_PACKAGE_mlx4_br=m" >> .config
-        make defconfig
-        
-        # 5. 编译 x86_64 专属包
-        make package/mlx4_br/compile V=s
+    - name: make
+      run: make
 
-    - name: Collect APK Artifacts
-      run: |
-        mkdir -p ./artifact_output
-        find /workdir-sdk/bin/packages/ -name "mlx4_br*.apk" -exec cp {} ./artifact_output/ \;
-        ls -la ./artifact_output/
+    - name: List artifacts
+      run: ls -la *.apk *.deb *.ipk 2>/dev/null || true
 
-    - name: Upload Artifact
+    - name: upload
       uses: actions/upload-artifact@v4
       with:
-        name: openwrt-25.12-mlx4_br-x86_64-apk
-        path: ./artifact_output/*.apk
+        name: artifacts
+        path: |
+          *.deb
+          *.apk
+          *.ipk
+        if-no-files-found: warn
